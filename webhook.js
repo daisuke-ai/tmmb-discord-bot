@@ -40,20 +40,87 @@ function saveScheduledDMs() {
     }
 }
 
+// Message templates
+function getMessageTemplate(count, firstName, coachName, calendarLink) {
+    const templates = {
+        7: `Hey ${firstName}! 👋
+
+${coachName} here - just wanted to check in on your first week in the Inner Circle!
+
+Quick questions:
+- Have you posted any content yet?
+- How did your onboarding call go?
+- Any roadblocks I can help with?
+- Are you attending the group calls?
+
+Don't hesitate to DM me anytime.
+
+The faster you take action, the faster you'll see results. Let's make this week count!`,
+
+        30: `${firstName}! 🎉
+
+You've officially been in the Inner Circle for a month!
+
+Time for your first progress review.
+
+BOOK YOUR 30-DAY REVIEW CALL: ${calendarLink}
+
+We'll discuss:
+✓ What's working for you
+✓ What needs adjusting
+✓ Your next 60 days strategy
+✓ Any obstacles to overcome
+
+So, just a quick check-in to make sure you're on the right track/see what we can do to help.
+
+Look forward to chatting.
+
+${coachName}`,
+
+        90: `${firstName}! 🔥
+
+90 days in the Inner Circle! This is a major milestone.
+
+You've now had:
+✓ 12+ weeks of 1-on-1 coaching
+✓ Dozens of group training calls
+✓ Access to brand connections
+✓ Your custom action plan and support
+
+It's time for your major quarterly review.
+
+BOOK YOUR 90-DAY REVIEW: ${calendarLink}
+
+We'll cover:
+✓ Your progress since joining
+✓ What's gone well/what hasn't
+✓ Setting your next 90-day targets
+✓ Getting you on the right track
+
+Look forward to chatting!
+
+${coachName}`
+    };
+
+    return templates[count] || null;
+}
+
 // Webhook endpoint to receive data from GoHighLevel
-app.post('/webhook/gohighlevel', (req, res) => {
+app.post('/webhook/gohighlevel', async (req, res) => {
     console.log('📥 Received webhook from GoHighLevel');
     console.log('Payload:', JSON.stringify(req.body, null, 2));
 
     try {
         const data = req.body;
 
-        // Extract relevant information from GoHighLevel webhook
-        // Adjust these fields based on your actual GoHighLevel webhook structure
+        // Extract required fields
         const discordUserId = data.discordUserId || data.userId;
-        const userName = data.name || data.userName || 'User';
-        const customMessage = data.message || '';
+        const firstName = data.firstName || data.name || 'User';
+        const coachName = data.coachName || 'Your Coach';
+        const calendarLink = data.calendarLink || data.calendar_link || 'https://calendly.com';
+        const count = parseInt(data.count);
 
+        // Validation
         if (!discordUserId) {
             return res.status(400).json({
                 success: false,
@@ -61,57 +128,58 @@ app.post('/webhook/gohighlevel', (req, res) => {
             });
         }
 
-        // Create timestamp for the initial action
-        const now = new Date();
-
-        // Calculate future dates (7, 30, 90 days)
-        const schedules = [
-            {
-                days: 7,
-                sendAt: new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000)),
-                message: customMessage || `Hey ${userName}! It's been 7 days since you joined. How's everything going? 🎉`
-            },
-            {
-                days: 30,
-                sendAt: new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000)),
-                message: customMessage || `Hey ${userName}! 30 days in - would love to hear about your progress! 💪`
-            },
-            {
-                days: 90,
-                sendAt: new Date(now.getTime() + (90 * 24 * 60 * 60 * 1000)),
-                message: customMessage || `Hey ${userName}! 90 days milestone! How has your journey been? 🚀`
-            }
-        ];
-
-        // Add to scheduled DMs
-        schedules.forEach(schedule => {
-            scheduledDMs.push({
-                id: `${discordUserId}_${schedule.days}_${Date.now()}`,
-                discordUserId: discordUserId,
-                userName: userName,
-                message: schedule.message,
-                days: schedule.days,
-                sendAt: schedule.sendAt.toISOString(),
-                sent: false,
-                createdAt: now.toISOString()
+        if (!count || ![7, 30, 90].includes(count)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid or missing count. Must be 7, 30, or 90'
             });
-        });
+        }
 
-        // Save to file
+        // Get the appropriate message template
+        const message = getMessageTemplate(count, firstName, coachName, calendarLink);
+
+        if (!message) {
+            return res.status(400).json({
+                success: false,
+                error: `No template found for count: ${count}`
+            });
+        }
+
+        console.log(`📨 Sending ${count}-day message to ${firstName} (${discordUserId})`);
+
+        // Send DM immediately
+        const dmData = {
+            discordUserId: discordUserId,
+            userName: firstName,
+            message: message
+        };
+
+        await sendDiscordDM(dmData);
+
+        // Log the sent DM
+        scheduledDMs.push({
+            id: `${discordUserId}_${count}_${Date.now()}`,
+            discordUserId: discordUserId,
+            userName: firstName,
+            coachName: coachName,
+            message: message,
+            count: count,
+            sent: true,
+            sentAt: new Date().toISOString()
+        });
         saveScheduledDMs();
 
-        console.log(`✅ Scheduled 3 DMs for user ${userName} (${discordUserId})`);
-        console.log(`   - 7 days: ${schedules[0].sendAt.toLocaleString()}`);
-        console.log(`   - 30 days: ${schedules[1].sendAt.toLocaleString()}`);
-        console.log(`   - 90 days: ${schedules[2].sendAt.toLocaleString()}`);
+        console.log(`✅ ${count}-day DM sent to ${firstName}`);
 
         res.json({
             success: true,
-            message: 'DMs scheduled successfully',
-            scheduled: schedules.map(s => ({
-                days: s.days,
-                sendAt: s.sendAt
-            }))
+            message: `${count}-day DM sent successfully`,
+            data: {
+                discordUserId: discordUserId,
+                firstName: firstName,
+                count: count,
+                sentAt: new Date().toISOString()
+            }
         });
 
     } catch (error) {
@@ -141,34 +209,7 @@ app.get('/scheduled', (req, res) => {
     });
 });
 
-// Cron job to check and send DMs every hour
-cron.schedule('0 * * * *', () => {
-    console.log('⏰ Checking for DMs to send...');
-    checkAndSendDMs();
-});
-
-// Also check every minute for testing (you can disable this later)
-cron.schedule('* * * * *', () => {
-    checkAndSendDMs();
-});
-
-// Function to check and send DMs
-async function checkAndSendDMs() {
-    const now = new Date();
-
-    const dmsToSend = scheduledDMs.filter(dm => {
-        const sendTime = new Date(dm.sendAt);
-        return !dm.sent && sendTime <= now;
-    });
-
-    if (dmsToSend.length > 0) {
-        console.log(`📤 Found ${dmsToSend.length} DMs to send`);
-
-        for (const dm of dmsToSend) {
-            await sendDiscordDM(dm);
-        }
-    }
-}
+// No cron jobs needed - GHL handles timing and triggers webhooks
 
 // Import Discord bot functions
 let discordBot = null;
@@ -219,6 +260,6 @@ app.listen(PORT, () => {
     console.log(`🚀 Webhook server running on port ${PORT}`);
     console.log(`📍 Webhook URL: http://localhost:${PORT}/webhook/gohighlevel`);
     console.log(`💚 Health check: http://localhost:${PORT}/health`);
-    console.log(`📋 View scheduled DMs: http://localhost:${PORT}/scheduled`);
-    console.log(`⏰ Cron job active - checking for DMs every minute`);
+    console.log(`📋 View sent DMs: http://localhost:${PORT}/scheduled`);
+    console.log(`✅ Ready to receive webhooks from GoHighLevel`);
 });
